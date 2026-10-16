@@ -5,8 +5,14 @@ description = "Prywatna aplikacja do typowania zakładów piłkarskich na podsta
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "httpx>=0.28.1",
+    "pandas>=3.0.6",
     "pydantic-settings>=2.6",
+    "sqlalchemy>=2.1.4",
 ]
+
+[project.scripts]
+bukmacherka = "bukmacherka.cli:main"
 
 [dependency-groups]
 dev = [

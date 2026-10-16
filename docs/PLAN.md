@@ -56,7 +56,8 @@ Przykład: model daje 55% na wygraną gospodarza. Kurs sprawiedliwy to 1,82,
 a kurs minimalny na single przy progu EV 5% wynosi 2,17. Sprawdzasz kurs w
 Superbecie i STS, wybierasz wyższy i wpisujesz go do aplikacji, a aplikacja
 przelicza EV i składa kupon. Do backtestu i wstępnej selekcji służą kursy
-z API (Pinnacle, średnia rynkowa).
+z API i z football-data.co.uk (Pinnacle, Betfair Exchange, średnia
+rynkowa).
 
 ## Rynki
 
@@ -66,7 +67,7 @@ z API (Pinnacle, średnia rynkowa).
 | Gole drużyny | gole gospodarza/gościa O/U, czyste konto, wygrana do zera | wszystkie | macierz wyników |
 | Handicapy | handicap europejski, azjatycki (±0,5 … ±2,5, ćwiartki) | wszystkie | macierz wyników |
 | Kombinacje | 1X2 + O/U, 1X2 + BTTS, BTTS + O/U, kreator zakładów z jednego meczu | wszystkie | macierz wyników (poprawnie liczy zależności w obrębie meczu) |
-| Połowy | 1X2 do przerwy, do przerwy/koniec meczu, gole w połowach | top 5 (Ekstraklasa po sprawdzeniu danych) | osobny model wyników do przerwy |
+| Połowy | 1X2 do przerwy, do przerwy/koniec meczu, gole w połowach | top 5 (dla Ekstraklasy brak wyników do przerwy) | osobny model wyników do przerwy |
 | Statystyki | rzuty rożne, kartki | top 5 | osobne modele (Poisson lub ujemny dwumianowy) |
 
 Rynki na strzelców i zawodników są poza zakresem, bo wymagają danych o
@@ -77,13 +78,44 @@ jakości.
 
 | Co | Źródło | Limit | Uwagi |
 |----|--------|-------|-------|
-| Historia: wyniki, kursy zamknięcia, rożne, kartki, wyniki do przerwy | football-data.co.uk (CSV) | brak | Pełne dane dla top 5. Ekstraklasa jest w „extra leagues” z węższym zestawem kolumn; zakres do sprawdzenia w etapie 1. |
+| Historia: wyniki, kursy zamknięcia, rożne, kartki, wyniki do przerwy, xG | football-data.co.uk (CSV) | brak | Zaimportowane w etapie 1, szczegóły niżej. |
 | Nadchodzące mecze + kursy (top 5) | football-data.co.uk `fixtures.csv` | brak | Aktualizowane przed kolejkami. |
 | Terminarz i wyniki (top 5) | football-data.org | darmowy plan, 10 zapytań/min | Bez Ekstraklasy. |
 | Terminarz, wyniki, kontuzje, kursy (Ekstraklasa i reszta) | API-Football | 100 zapytań/dzień | Do sprawdzenia z kluczem: czy darmowy plan obejmuje bieżący sezon. |
 | Kursy referencyjne (Pinnacle, rynek EU) | The Odds API | 500 kredytów/mies. | Koszt zapytania = rynki × regiony. Do sprawdzenia: czy jest Ekstraklasa. |
-| xG | Understat | brak (scraping) | Tylko top 5. |
+| xG dla starszych sezonów | Understat | brak (scraping) | Tylko top 5. Od 2026/27 xG jest już w plikach football-data.co.uk. |
 | Kursy Superbetu i STS | ręcznie w aplikacji | — | Patrz „Kurs minimalny”. |
+
+### Co jest w danych historycznych (sprawdzone w etapie 1)
+
+Zaimportowane sezony 2019/20 – 2026/27: 14 910 meczów i ok. 770 tys.
+kursów. Pełny raport pokazuje `uv run bukmacherka report`.
+
+| | Top 5 lig | Ekstraklasa |
+|---|---|---|
+| Wynik | tak | tak |
+| Wynik do przerwy, strzały, rożne, kartki, faule | tak | nie |
+| xG | od 2026/27 | nie |
+| Kursy otwarcia (przed kolejką) | 1X2, O/U 2,5, AH | nie |
+| Kursy zamknięcia | 1X2, O/U 2,5, AH | tylko 1X2 |
+| Pinnacle | do ok. połowy 2025/26 | do ok. 1/3 2025/26 |
+| Betfair Exchange | od 2024/25 | od 2024/25 |
+| Średnia i maksimum rynku | wszystkie sezony | wszystkie sezony |
+| bet365 | wszystkie sezony | od 2025/26 |
+
+Wnioski:
+
+- **Punkt odniesienia dla kursów:** Pinnacle do 2025/26, a od sezonu
+  2026/27 Betfair Exchange (najniższa marża, ok. 0,6%). Średnia rynkowa
+  jest dostępna zawsze.
+- **Ekstraklasa:** backtest i CLV tylko na rynku 1X2. Pozostałe rynki dla
+  Ekstraklasy da się policzyć z modelu goli, ale nie zweryfikujemy ich na
+  historycznych kursach, dopóki worker nie uzbiera własnych.
+- **Jakość danych:** w kolumnach z maksimum rynku zdarzają się błędne
+  kursy (suma odwrotności kursów poniżej 0,9). Przed backtestem trzeba je
+  odfiltrować.
+- **Nazwy drużyn:** w plikach była jedna zmiana nazwy (Górnik Zabrze),
+  poprawiona słownikiem `TEAM_RENAMES`.
 
 ### Budżet zapytań (szkic)
 
@@ -170,10 +202,10 @@ jakości.
 
 | Etap | Zakres | Kryterium ukończenia |
 |------|--------|----------------------|
-| 0 | Szkielet: `uv`, `ruff`, `pytest`, CI, konfiguracja | Lint i testy przechodzą lokalnie i w CI |
-| 1 | Import historii z football-data.co.uk, aliasy drużyn | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
+| 0 ✅ | Szkielet: `uv`, `ruff`, `pytest`, CI, konfiguracja | Lint i testy przechodzą lokalnie i w CI |
+| 1 ✅ | Import historii z football-data.co.uk | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
 | 2 | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem |
-| 3 | Bieżące dane: klienci API, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
+| 3 | Bieżące dane: klienci API, aliasy nazw drużyn między źródłami, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
 | 4 | Uruchamianie lokalne: panel i worker jednym poleceniem, autostart workera jako usługa użytkownika systemd, nadrabianie zaległych zadań, backup bazy | Po włączeniu komputera dane same się aktualizują |
 | 5 | Value, kurs minimalny, generator kuponów, rozliczanie | Kupony generują się i rozliczają automatycznie |
 | 6 | Panel Streamlit | Wszystkie ekrany działają lokalnie |

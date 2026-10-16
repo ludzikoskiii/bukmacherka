@@ -1,0 +1,6 @@
+﻿Country,League,Season,Date,Time,Home,Away,HG,AG,Res,PSCH,PSCD,PSCA,MaxCH,MaxCD,MaxCA,AvgCH,AvgCD,AvgCA,BFECH,BFECD,BFECA,B365CH,B365CD,B365CA
+Poland,Ekstraklasa,2018/2019,20/07/2018,17:00,Legnica,Pogon Szczecin,1,0,H,2.74,3.36,2.7,2.8,3.36,2.78,2.65,3.2,2.64,,,,,,
+Poland,Ekstraklasa,2025/2026,18/07/2025,17:00,Jagiellonia,Termalica B-B.,0,4,A,1.64,4.27,5.05,1.64,4.27,5.3,1.59,3.99,4.87,1.71,4.3,5.3,,,
+Poland,Ekstraklasa,2025/2026,18/07/2025,19:30,Lech Poznan,Cracovia,1,4,A,1.64,4.4,4.9,1.64,4.4,5.5,1.59,4.02,4.78,1.68,4.5,5.4,,,
+Poland,Ekstraklasa,2026/2027,12/10/2026,17:00,Radomiak Radom,Motor Lublin,2,3,A,,,,2.7,3.55,2.57,2.6,3.36,2.44,2.9,3.45,2.66,2.7,3.25,2.38
+Poland,Ekstraklasa,2026/2027,12/10/2026,19:30,GKS Katowice,Wieczysta Krakow,2,1,H,,,,2.02,4,3.2,1.99,3.77,3.07,2.16,4,3.35,1.95,3.7,3.2

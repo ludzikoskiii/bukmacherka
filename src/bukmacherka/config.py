@@ -1,5 +1,7 @@
 """Ustawienia aplikacji wczytywane ze zmiennych środowiskowych i pliku `.env`."""
 
+from pathlib import Path
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,9 +15,13 @@ class Settings(BaseSettings):
     )
 
     database_url: str = "sqlite:///data/bukmacherka.db"
+    data_dir: Path = Path("data")
 
     # Kody lig w notacji football-data.co.uk.
     leagues: list[str] = ["E0", "SP1", "I1", "D1", "F1", "POL"]
+    # Rok rozpoczęcia najstarszego importowanego sezonu (2019 = sezon 2019/2020).
+    # Od tego sezonu pliki mają kursy zamknięcia średniej i maksimum rynku.
+    first_season: int = Field(default=2019, ge=2000)
 
     # Podatek od stawki kuponu w Polsce, pobierany raz na kupon.
     tax_rate: float = Field(default=0.12, ge=0, lt=1)

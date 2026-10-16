@@ -18,6 +18,17 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
+## Dane
+
+```bash
+uv run bukmacherka import-history   # pobierz historię do data/bukmacherka.db
+uv run bukmacherka report           # pokaż, co jest w bazie
+```
+
+Pobrane pliki CSV trafiają do `data/raw/`. Zakończone sezony pobierają się
+tylko raz, a bieżący przy każdym uruchomieniu. Opcje: `--leagues E0 POL`,
+`--first-season 2021`, `--refresh`.
+
 ## Struktura
 
 ```
