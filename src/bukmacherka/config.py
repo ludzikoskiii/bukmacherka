@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     winnings_tax_rate: float = Field(default=0.10, ge=0, lt=1)
 
     min_ev: float = Field(default=0.05, ge=0)
+    # Minimalna przewaga zdarzenia (bez podatku), żeby trafiło do kuponu AKO.
+    min_leg_edge: float = Field(default=0.05, ge=0)
     kelly_fraction: float = Field(default=0.25, gt=0, le=1)
     max_stake_pct: float = Field(default=0.02, gt=0, le=1)
 
