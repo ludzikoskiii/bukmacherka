@@ -16,7 +16,7 @@ jest pisany tak, żeby później dało się go łatwo przenieść na serwer.
 | Rynki         | Jak najwięcej (szczegóły niżej)                               |
 | Logika        | Model statystyczny + value bety                               |
 | Forma         | Aplikacja webowa w Streamlit                                  |
-| Uruchamianie  | Na razie lokalnie na komputerze, serwer później               |
+| Uruchamianie  | Na razie lokalnie na komputerze (Linux), serwer później       |
 | Budżet na API | Tylko darmowe plany                                           |
 | Odbiorcy      | Tylko ja (bez kont i płatności)                               |
 
@@ -174,7 +174,7 @@ jakości.
 | 1 | Import historii z football-data.co.uk, aliasy drużyn | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
 | 2 | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem |
 | 3 | Bieżące dane: klienci API, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
-| 4 | Uruchamianie lokalne: panel i worker jednym poleceniem, autostart workera z systemem, nadrabianie zaległych zadań, backup bazy | Po włączeniu komputera dane same się aktualizują |
+| 4 | Uruchamianie lokalne: panel i worker jednym poleceniem, autostart workera jako usługa użytkownika systemd, nadrabianie zaległych zadań, backup bazy | Po włączeniu komputera dane same się aktualizują |
 | 5 | Value, kurs minimalny, generator kuponów, rozliczanie | Kupony generują się i rozliczają automatycznie |
 | 6 | Panel Streamlit | Wszystkie ekrany działają lokalnie |
 | 7 | Połowy, rożne, kartki, xG, kontuzje | Nowe rynki przechodzą backtest |
