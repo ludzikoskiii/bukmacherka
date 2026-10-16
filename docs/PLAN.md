@@ -1,143 +1,202 @@
-# Bukmacherka — plan aplikacji (wersja robocza)
+# Bukmacherka — plan aplikacji
 
 Prywatna aplikacja webowa, która zbiera dane piłkarskie z internetu, liczy
 prawdopodobieństwa wyników modelem statystycznym, porównuje je z kursami
-bukmacherów i na tej podstawie układa kupony z zakładów o dodatniej wartości
-oczekiwanej (value bety).
+i na tej podstawie układa kupony z zakładów o dodatniej wartości
+oczekiwanej (value bety). Działa na serwerze: dane pobierają się same,
+a panel otwiera się w przeglądarce na komputerze i telefonie.
 
 ## Ustalenia
 
-| Obszar     | Decyzja                                        |
-|------------|------------------------------------------------|
-| Sport      | Tylko piłka nożna (inne sporty ewentualnie później) |
-| Forma      | Aplikacja webowa                               |
-| Logika     | Model statystyczny + value bety                |
-| Odbiorcy   | Tylko ja (bez kont, bez płatności)             |
+| Obszar        | Decyzja                                                       |
+|---------------|---------------------------------------------------------------|
+| Sport         | Piłka nożna                                                   |
+| Ligi          | Premier League, La Liga, Serie A, Bundesliga, Ligue 1, Ekstraklasa |
+| Bukmacherzy   | Superbet i STS                                                |
+| Rynki         | Jak najwięcej (szczegóły niżej)                               |
+| Logika        | Model statystyczny + value bety                               |
+| Forma         | Aplikacja webowa w Streamlit                                  |
+| Uruchamianie  | Serwer (VPS), zadania w tle według harmonogramu               |
+| Budżet na API | Tylko darmowe plany                                           |
+| Odbiorcy      | Tylko ja (bez kont i płatności)                               |
 
-## Założenia, o których trzeba pamiętać
+## Podatek i matematyka kuponu
 
-- **Podatek 12% od stawki.** U legalnych polskich bukmacherów od stawki
-  potrąca się 12% podatku, więc efektywny kurs to `kurs × 0,88`. Przez to
-  zakład musi mieć ok. 14% przewagi nad kursem, żeby w ogóle wyjść na zero.
-  Model musi liczyć wartość oczekiwaną (EV) na kursie efektywnym, a nie
-  nominalnym. Wygrane powyżej 2280 zł są dodatkowo opodatkowane stawką 10%.
-- **Marża w kuponach AKO się mnoży.** Każde zdarzenie dokłada marżę
-  bukmachera, więc długie kupony prawie zawsze mają ujemne EV. Generator
-  powinien preferować single i krótkie AKO (2–3 zdarzenia) złożone wyłącznie
-  z value betów.
-- **Najpierw backtest, potem interfejs.** Zanim powstanie UI, model musi
-  pokazać na danych historycznych, że wygrywa z kursami zamknięcia. Jeśli nie
-  wygrywa, poprawiamy model, a nie wygląd aplikacji.
+Superbet i STS potrącają **12% podatku od stawki kuponu**, więc wypłata to
+`stawka × 0,88 × kurs`. Podatek płaci się **raz na kupon**, niezależnie od
+liczby zdarzeń. Z tego wynikają reguły generatora:
 
-## Źródła danych
+- **Single:** EV = `p × kurs × 0,88 − 1`. Żeby wyjść na zero, potrzeba
+  `p × kurs ≥ 1,136`, czyli ok. 14% przewagi nad kursem. Takie okazje będą
+  rzadkie.
+- **AKO z value betów:** EV = `(p₁ × kurs₁) × (p₂ × kurs₂) × … × 0,88 − 1`.
+  Przewagi zdarzeń się mnożą, a podatek jest płacony tylko raz. Przykład:
+  trzy zdarzenia, każde z 5% przewagi, dają `1,05³ × 0,88 − 1 ≈ +1,9%`,
+  podczas gdy każde z nich jako single ma EV ≈ −7,6%.
+- **AKO z przypadkowych zdarzeń:** marża bukmachera mnoży się tak samo jak
+  przewaga, więc taki kupon ma mocno ujemne EV. Na kupon trafiają tylko
+  zdarzenia, w których model widzi przewagę.
+- **Ryzyko długich kuponów:** każde zdarzenie dokłada błąd modelu i obniża
+  szansę trafienia. Generator ma więc limit liczby zdarzeń (np. 2–5),
+  minimalne łączne prawdopodobieństwo i małe stawki (ułamkowy Kelly).
+- **Wygrane powyżej 2280 zł** podlegają dodatkowo 10% podatku. Stawka
+  podatku, próg i ewentualne bonusy bukmachera (np. promocje „bez
+  podatku”, bonus za AKO) będą w ustawieniach.
 
-| Co                              | Źródło                         | Koszt / limit                     | Uwagi |
-|---------------------------------|--------------------------------|-----------------------------------|-------|
-| Historyczne wyniki + kursy      | football-data.co.uk (CSV)      | darmowe                           | Zawiera kursy zamknięcia (m.in. Pinnacle). Idealne do treningu i backtestu. |
-| Terminarz, wyniki, kontuzje     | API-Football (api-sports.io)   | darmowy plan: 100 zapytań/dzień    | Ma też składy i kursy. Free plan ograniczony do części sezonów. |
-| Terminarz (alternatywa)         | football-data.org              | darmowy plan, kilkanaście lig     | Prosty, stabilny. |
-| Aktualne kursy                  | The Odds API                   | darmowo 500 kredytów/mies.        | Koszt zapytania = liczba rynków × liczba regionów. Polscy bukmacherzy raczej niedostępni. |
-| xG (expected goals)             | Understat                      | darmowe (scraping)                | Top 5 lig + liga rosyjska. Na FBref od stycznia 2026 nie ma już zaawansowanych statystyk Opta. |
-| Kursy mojego bukmachera         | Ręczne wpisanie w aplikacji    | —                                 | Scrapowanie STS/Fortuny/Superbetu łamie ich regulaminy, więc na start wpisujemy kursy ręcznie. |
+### Kurs minimalny
+
+Darmowe API nie dają kursów Superbetu i STS, a ich pobieranie ze stron
+łamie regulaminy tych serwisów. Dlatego aplikacja przy każdym typie pokazuje
+**kurs minimalny**, czyli najniższy kurs, przy którym zakład ma sens:
+
+- jako single: `kurs_min = (1 + próg_EV) / (p × 0,88)`
+- jako zdarzenie w AKO: `kurs_min = (1 + próg_przewagi) / p`
+
+Przykład: model daje 55% na wygraną gospodarza. Kurs sprawiedliwy to 1,82,
+a kurs minimalny na single przy progu EV 5% wynosi 2,17. Sprawdzasz kurs w
+Superbecie i STS, wybierasz wyższy i wpisujesz go do aplikacji, a aplikacja
+przelicza EV i składa kupon. Do backtestu i wstępnej selekcji służą kursy
+z API (Pinnacle, średnia rynkowa).
+
+## Rynki
+
+| Grupa | Rynki | Ligi | Źródło prawdopodobieństw |
+|-------|-------|------|--------------------------|
+| Gole w meczu | 1X2, podwójna szansa, DNB, Over/Under 0,5–5,5, BTTS, dokładny wynik, przedziały goli (np. 2–3), parzyste/nieparzyste, margines zwycięstwa | wszystkie | macierz wyników z modelu |
+| Gole drużyny | gole gospodarza/gościa O/U, czyste konto, wygrana do zera | wszystkie | macierz wyników |
+| Handicapy | handicap europejski, azjatycki (±0,5 … ±2,5, ćwiartki) | wszystkie | macierz wyników |
+| Kombinacje | 1X2 + O/U, 1X2 + BTTS, BTTS + O/U, kreator zakładów z jednego meczu | wszystkie | macierz wyników (poprawnie liczy zależności w obrębie meczu) |
+| Połowy | 1X2 do przerwy, do przerwy/koniec meczu, gole w połowach | top 5 (Ekstraklasa po sprawdzeniu danych) | osobny model wyników do przerwy |
+| Statystyki | rzuty rożne, kartki | top 5 | osobne modele (Poisson lub ujemny dwumianowy) |
+
+Rynki na strzelców i zawodników są poza zakresem, bo wymagają danych o
+składach i minutach gry, których darmowe źródła nie dają w wystarczającej
+jakości.
+
+## Źródła danych (darmowe)
+
+| Co | Źródło | Limit | Uwagi |
+|----|--------|-------|-------|
+| Historia: wyniki, kursy zamknięcia, rożne, kartki, wyniki do przerwy | football-data.co.uk (CSV) | brak | Pełne dane dla top 5. Ekstraklasa jest w „extra leagues” z węższym zestawem kolumn; zakres do sprawdzenia w etapie 1. |
+| Nadchodzące mecze + kursy (top 5) | football-data.co.uk `fixtures.csv` | brak | Aktualizowane przed kolejkami. |
+| Terminarz i wyniki (top 5) | football-data.org | darmowy plan, 10 zapytań/min | Bez Ekstraklasy. |
+| Terminarz, wyniki, kontuzje, kursy (Ekstraklasa i reszta) | API-Football | 100 zapytań/dzień | Do sprawdzenia z kluczem: czy darmowy plan obejmuje bieżący sezon. |
+| Kursy referencyjne (Pinnacle, rynek EU) | The Odds API | 500 kredytów/mies. | Koszt zapytania = rynki × regiony. Do sprawdzenia: czy jest Ekstraklasa. |
+| xG | Understat | brak (scraping) | Tylko top 5. |
+| Kursy Superbetu i STS | ręcznie w aplikacji | — | Patrz „Kurs minimalny”. |
+
+### Budżet zapytań (szkic)
+
+- **The Odds API:** 6 lig × 2 rynki (h2h, totals) × 1 region = 12 kredytów
+  na odświeżenie. To ok. 40 odświeżeń miesięcznie, czyli jedno dziennie
+  i kilka dodatkowych przed weekendem.
+- **API-Football:** codziennie terminarz i wyniki Ekstraklasy, kontuzje
+  i kursy dla meczów z najbliższych 3 dni. Plan zakłada 30–60 zapytań
+  dziennie, z zapasem.
+- **football-data.org:** terminarz i wyniki top 5, kilka zapytań dziennie.
+- **football-data.co.uk:** raz w tygodniu nowe wyniki z kursami zamknięcia
+  (do CLV i ponownego trenowania modelu).
 
 ## Architektura
 
 ```
-[Źródła danych] → [Zbieracze (jobs)] → [Baza danych] → [Model] → [Value bety] → [Generator kuponów] → [Web UI]
-                                                                                        ↓
-                                                                        [Rozliczanie + statystyki]
+[Źródła danych] → [Worker: zadania wg harmonogramu] → [SQLite] → [Model] → [Typy + kurs minimalny]
+                                                                               ↓
+                                         [Streamlit] ← [Generator kuponów] ← [Kursy wpisane ręcznie]
+                                                                               ↓
+                                                               [Rozliczanie + statystyki]
 ```
 
-Proponowany stack (do potwierdzenia):
+### Stack
 
-- **Python 3.12**, zarządzanie zależnościami: `uv`
-- **Baza:** SQLite (wystarczy dla jednej osoby), ORM: SQLAlchemy
-- **Zbieranie danych:** `httpx`, `pandas`, harmonogram: APScheduler albo cron
-- **Model:** `numpy`, `scipy`, `statsmodels`; później `scikit-learn` lub `lightgbm`
-- **UI:** Streamlit (najszybsza droga do panelu dla jednej osoby). Gdyby
-  aplikacja miała urosnąć, można przejść na FastAPI + React.
-- **Jakość:** `ruff`, `pytest`
+- **Python 3.12+**, zależności: `uv`
+- **Baza:** SQLite + SQLAlchemy (jeden użytkownik, jeden plik, łatwy backup)
+- **Dane:** `httpx`, `pandas`
+- **Model:** `numpy`, `scipy`; później `scikit-learn` lub `lightgbm`
+- **Harmonogram:** APScheduler w osobnym procesie (worker)
+- **UI:** Streamlit
+- **Jakość:** `ruff`, `pytest`, GitHub Actions
+- **Wdrożenie:** Docker Compose (kontenery `app` i `worker`, wspólny wolumen
+  z bazą)
 
-### Moduły
+### Moduły (`src/bukmacherka/`)
 
-1. **`ingest/`** — pobieranie danych z każdego źródła, normalizacja nazw
-   drużyn (różne źródła różnie je zapisują, więc potrzebna jest tabela
+1. **`ingest/`** — klienci źródeł danych, normalizacja nazw drużyn (tabela
    aliasów), zapis do bazy.
-2. **`model/`**
-   - Model Dixona-Colesa (Poisson z korektą niskich wyników i ważeniem
-     czasowym): siła ataku i obrony każdej drużyny, przewaga gospodarza.
-   - Z macierzy prawdopodobieństw wyników liczymy rynki 1X2, Over/Under 2.5,
-     BTTS i podwójną szansę.
-   - Elo jako punkt odniesienia i dodatkowa cecha.
-   - Później: cechy z xG, kontuzji i zmęczenia (terminarz).
-3. **`backtest/`** — symulacja obstawiania na historycznych kursach.
-   Metryki: log loss i Brier score modelu na tle kursów bez marży, ROI,
-   yield, maksymalne obsunięcie kapitału i CLV (czy łapiemy lepsze kursy
-   niż kurs zamknięcia).
-4. **`value/`** — EV = `p_model × kurs × 0,88 − 1`; próg np. EV > 5%.
-   Stawka: ułamkowe kryterium Kelly'ego (np. ¼ Kelly) z limitem % bankrolla.
-5. **`coupons/`** — generator kuponów:
-   - profile ryzyka: *bezpieczny* (single, niskie kursy),
-     *zbalansowany* (AKO 2–3), *ryzykowny* (wyższe kursy);
-   - ograniczenia: maksymalnie jedno zdarzenie z danego meczu, zakres kursów,
-     wybrane ligi i rynki;
-   - dla każdego kuponu: łączne prawdopodobieństwo, kurs, EV i sugerowana
-     stawka.
-6. **`tracking/`** — zapis każdego kuponu, automatyczne rozliczanie po
-   wynikach, historia bankrolla.
-7. **`app/`** — interfejs webowy.
+2. **`model/`** — model Dixona-Colesa (siła ataku i obrony, przewaga
+   gospodarza, ważenie czasowe) → macierz wyników → wszystkie rynki golowe.
+   Osobne modele dla połów, rzutów rożnych i kartek. Elo jako punkt
+   odniesienia.
+3. **`backtest/`** — symulacja na historycznych kursach zamknięcia:
+   log loss i Brier score na tle kursów bez marży, ROI, yield, obsunięcie
+   kapitału, CLV. Single i AKO, z podatkiem 12%.
+4. **`value/`** — EV, kurs minimalny, przewaga, stawka (¼ Kelly z limitem).
+5. **`coupons/`** — generator: profile ryzyka (*bezpieczny*: single i AKO
+   2, *zbalansowany*: AKO 2–3, *ryzykowny*: AKO 4–5), maksymalnie jedno
+   zdarzenie z meczu (poza kreatorem zakładów), filtry lig, rynków
+   i kursów.
+6. **`tracking/`** — zapis kuponów, automatyczne rozliczanie, historia
+   bankrolla.
+7. **`app/`** — panel Streamlit.
+8. **`worker/`** — harmonogram zadań.
 
-### Ekrany aplikacji
+### Ekrany
 
-- **Dziś / Najbliższe mecze:** lista meczów z prawdopodobieństwami modelu
-  i kursami.
-- **Value bety:** zdarzenia z EV powyżej progu, posortowane.
-- **Generator kuponu:** wybór profilu i ograniczeń, wygenerowane kupony,
-  możliwość ręcznego wpisania kursu z mojego bukmachera.
-- **Historia i statystyki:** ROI, yield, skuteczność, wykres bankrolla, CLV.
-- **Ustawienia:** bankroll, ligi, próg EV, ułamek Kelly'ego, limity stawek.
+- **Najbliższe mecze:** prawdopodobieństwa i kursy sprawiedliwe na
+  wszystkich rynkach.
+- **Typy:** zdarzenia z przewagą, z kursem minimalnym dla singla i dla AKO.
+- **Generator kuponu:** profil, filtry, wpisanie kursów z Superbetu i STS,
+  gotowe kupony z EV i stawką.
+- **Historia i statystyki:** ROI, yield, skuteczność, wykres bankrolla,
+  CLV, osobno dla rynków i lig.
+- **Ustawienia:** bankroll, próg EV, ułamek Kelly'ego, limity, podatek,
+  bonusy bukmachera.
 
 ## Model danych (szkic)
 
-- `teams` (id, nazwa, liga) + `team_aliases` (alias, źródło, team_id)
-- `matches` (id, liga, sezon, data, gospodarz, gość, gole, xG, status)
-- `odds` (match_id, bukmacher, rynek, wybór, kurs, czas pobrania, czy zamknięcie)
-- `predictions` (match_id, wersja modelu, rynek, wybór, prawdopodobieństwo)
-- `coupons` (id, data, profil, stawka, kurs łączny, EV, status, wynik)
-- `coupon_legs` (coupon_id, match_id, rynek, wybór, kurs, rozliczenie)
-- `bankroll_log` (data, saldo, zmiana, powód)
+- `teams`, `team_aliases`
+- `matches` (liga, sezon, data, drużyny, wynik, wynik do przerwy, xG,
+  rożne, kartki, status)
+- `odds` (mecz, źródło/bukmacher, rynek, wybór, linia, kurs, czas, czy
+  zamknięcie)
+- `predictions` (mecz, wersja modelu, rynek, wybór, linia,
+  prawdopodobieństwo)
+- `coupons`, `coupon_legs` (kurs wpisany, bukmacher, rozliczenie)
+- `bankroll_log`
+- `job_runs` (które zadanie, kiedy, ile zapytań zużyło, czy się udało)
 
 ## Etapy
 
 | Etap | Zakres | Kryterium ukończenia |
 |------|--------|----------------------|
-| 0 | Szkielet repo: `uv`, `ruff`, `pytest`, struktura katalogów | Testy i lint przechodzą |
-| 1 | Import historycznych CSV z football-data.co.uk do SQLite | Kilka sezonów wybranych lig w bazie |
-| 2 | Model Dixona-Colesa + backtest | Raport: kalibracja, ROI na kursach zamknięcia (z podatkiem 12%) |
-| 3 | Bieżące dane: terminarz + kursy (API-Football / The Odds API), codzienny job | Jutrzejsze mecze z kursami w bazie |
-| 4 | Value bety + generator kuponów + rozliczanie | Kupony generują się i rozliczają automatycznie |
-| 5 | Interfejs webowy (Streamlit) | Wszystkie ekrany działają lokalnie |
-| 6 | Ulepszenia: xG, kontuzje, więcej rynków, ewentualnie opis kuponu generowany przez AI | Lepsze wyniki w backteście niż wersja z etapu 2 |
+| 0 | Szkielet: `uv`, `ruff`, `pytest`, CI, konfiguracja | Lint i testy przechodzą lokalnie i w CI |
+| 1 | Import historii z football-data.co.uk, aliasy drużyn | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
+| 2 | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem |
+| 3 | Bieżące dane: klienci API, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
+| 4 | Wdrożenie na serwer (Docker Compose) | Worker działa na serwerze i codziennie zbiera kursy |
+| 5 | Value, kurs minimalny, generator kuponów, rozliczanie | Kupony generują się i rozliczają automatycznie |
+| 6 | Panel Streamlit | Wszystkie ekrany działają na serwerze |
+| 7 | Połowy, rożne, kartki, xG, kontuzje | Nowe rynki przechodzą backtest |
 
-Etap 2 jest punktem decyzyjnym: jeśli backtest nie pokazuje przewagi nad
-kursami, wracamy do modelu i danych, zanim zaczniemy etapy 3–5.
+**Etap 2 jest punktem decyzyjnym:** jeśli model nie pokazuje przewagi nad
+kursami zamknięcia, wracamy do modelu i danych.
 
-## Otwarte pytania
+**Wdrożenie jest przed panelem:** historycznych kursów nie da się pobrać
+za darmo, więc im wcześniej worker zacznie je zbierać, tym więcej danych
+do oceny modelu.
 
-1. Które ligi na start? (propozycja: Premier League, La Liga, Serie A,
-   Bundesliga, Ligue 1 i Ekstraklasa)
-2. U którego bukmachera grasz? To decyduje, skąd brać kursy i czy dotyczy
-   Cię podatek 12%.
-3. Budżet na API: zostajemy przy darmowych planach czy dopuszczamy ok. 20 USD
-   miesięcznie (np. API-Football Pro)?
-4. Rynki na start: tylko 1X2, czy od razu też Over/Under i BTTS?
-5. Uruchamianie: lokalnie na komputerze czy na małym serwerze (VPS), żeby
-   kursy pobierały się same?
-6. UI: Streamlit wystarczy, czy od początku chcesz FastAPI + React?
+## Do ustalenia przed etapem 4
+
+1. **Serwer:** darmowy Oracle Cloud Always Free (0 zł, ale trudniejsza
+   rejestracja) czy tani VPS (np. Hetzner, mikr.us, kilkanaście zł
+   miesięcznie)?
+2. **Dostęp do panelu:** Tailscale (prywatna sieć, nic nie jest publicznie
+   wystawione, aplikacja na telefonie i komputerze) czy hasło przez
+   przeglądarkę (reverse proxy Caddy z HTTPS)?
 
 ## Odpowiedzialna gra
 
 Aplikacja ma wbudowane limity: maksymalna stawka jako % bankrolla, dzienny
 limit kuponów i widoczny bilans. Celem jest mierzalne podejmowanie decyzji,
 a nie gwarancja wygranej. Model może się mylić, a bukmacherzy mają przewagę
-w postaci marży i podatku.
+w postaci marży, a w Polsce dodatkowo podatku.

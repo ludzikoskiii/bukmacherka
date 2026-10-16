@@ -1,0 +1,1 @@
+"""Panel webowy w Streamlit."""
