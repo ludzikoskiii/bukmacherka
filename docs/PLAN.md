@@ -3,8 +3,8 @@
 Prywatna aplikacja webowa, która zbiera dane piłkarskie z internetu, liczy
 prawdopodobieństwa wyników modelem statystycznym, porównuje je z kursami
 i na tej podstawie układa kupony z zakładów o dodatniej wartości
-oczekiwanej (value bety). Działa na serwerze: dane pobierają się same,
-a panel otwiera się w przeglądarce na komputerze i telefonie.
+oczekiwanej (value bety). Na razie działa lokalnie na komputerze, a kod
+jest pisany tak, żeby później dało się go łatwo przenieść na serwer.
 
 ## Ustalenia
 
@@ -16,7 +16,7 @@ a panel otwiera się w przeglądarce na komputerze i telefonie.
 | Rynki         | Jak najwięcej (szczegóły niżej)                               |
 | Logika        | Model statystyczny + value bety                               |
 | Forma         | Aplikacja webowa w Streamlit                                  |
-| Uruchamianie  | Serwer (VPS), zadania w tle według harmonogramu               |
+| Uruchamianie  | Na razie lokalnie na komputerze, serwer później               |
 | Budżet na API | Tylko darmowe plany                                           |
 | Odbiorcy      | Tylko ja (bez kont i płatności)                               |
 
@@ -116,8 +116,8 @@ jakości.
 - **Harmonogram:** APScheduler w osobnym procesie (worker)
 - **UI:** Streamlit
 - **Jakość:** `ruff`, `pytest`, GitHub Actions
-- **Wdrożenie:** Docker Compose (kontenery `app` i `worker`, wspólny wolumen
-  z bazą)
+- **Uruchamianie:** lokalnie przez `uv` (panel i worker). Docker Compose
+  dopiero przy przenosinach na serwer.
 
 ### Moduły (`src/bukmacherka/`)
 
@@ -138,7 +138,8 @@ jakości.
 6. **`tracking/`** — zapis kuponów, automatyczne rozliczanie, historia
    bankrolla.
 7. **`app/`** — panel Streamlit.
-8. **`worker/`** — harmonogram zadań.
+8. **`worker/`** — harmonogram zadań. Po uruchomieniu nadrabia zadania
+   pominięte, kiedy komputer był wyłączony.
 
 ### Ekrany
 
@@ -173,26 +174,35 @@ jakości.
 | 1 | Import historii z football-data.co.uk, aliasy drużyn | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
 | 2 | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem |
 | 3 | Bieżące dane: klienci API, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
-| 4 | Wdrożenie na serwer (Docker Compose) | Worker działa na serwerze i codziennie zbiera kursy |
+| 4 | Uruchamianie lokalne: panel i worker jednym poleceniem, autostart workera z systemem, nadrabianie zaległych zadań, backup bazy | Po włączeniu komputera dane same się aktualizują |
 | 5 | Value, kurs minimalny, generator kuponów, rozliczanie | Kupony generują się i rozliczają automatycznie |
-| 6 | Panel Streamlit | Wszystkie ekrany działają na serwerze |
+| 6 | Panel Streamlit | Wszystkie ekrany działają lokalnie |
 | 7 | Połowy, rożne, kartki, xG, kontuzje | Nowe rynki przechodzą backtest |
 
 **Etap 2 jest punktem decyzyjnym:** jeśli model nie pokazuje przewagi nad
 kursami zamknięcia, wracamy do modelu i danych.
 
-**Wdrożenie jest przed panelem:** historycznych kursów nie da się pobrać
-za darmo, więc im wcześniej worker zacznie je zbierać, tym więcej danych
-do oceny modelu.
+**Worker ruszy przed panelem:** football-data.co.uk daje za darmo tylko
+kursy zamknięcia na część rynków (1X2, O/U 2,5, handicap azjatycki). Kursów
+na pozostałych rynkach i kursów sprzed zamknięcia nie da się później pobrać
+wstecz, więc im wcześniej worker zacznie je zbierać, tym więcej danych do
+oceny modelu. Przy pracy lokalnej kursy zbierają się tylko wtedy, gdy
+komputer jest włączony. Luki w kursach zamknięcia uzupełni cotygodniowy
+import z football-data.co.uk.
 
-## Do ustalenia przed etapem 4
+## Na później: serwer
+
+Na razie wszystko działa lokalnie. Przy przenosinach na serwer trzeba
+będzie wybrać:
 
 1. **Serwer:** darmowy Oracle Cloud Always Free (0 zł, ale trudniejsza
-   rejestracja) czy tani VPS (np. Hetzner, mikr.us, kilkanaście zł
-   miesięcznie)?
+   rejestracja) albo tani VPS (np. Hetzner, mikr.us, kilkanaście zł
+   miesięcznie).
 2. **Dostęp do panelu:** Tailscale (prywatna sieć, nic nie jest publicznie
-   wystawione, aplikacja na telefonie i komputerze) czy hasło przez
-   przeglądarkę (reverse proxy Caddy z HTTPS)?
+   wystawione) albo hasło przez przeglądarkę (reverse proxy Caddy z HTTPS).
+
+Przeniesienie sprowadzi się do dodania Docker Compose, bo konfiguracja
+i baza są już oddzielone od kodu.
 
 ## Odpowiedzialna gra
 

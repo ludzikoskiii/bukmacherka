@@ -1,1 +1,1 @@
-"""Harmonogram zadań uruchamianych w tle na serwerze."""
+"""Harmonogram zadań uruchamianych w tle (pobieranie danych, rozliczanie)."""
