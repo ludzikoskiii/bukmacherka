@@ -96,7 +96,7 @@ kursów. Pełny raport pokazuje `uv run bukmacherka report`.
 | Wynik | tak | tak |
 | Wynik do przerwy, strzały, rożne, kartki, faule | tak | nie |
 | xG | od 2026/27 | nie |
-| Kursy otwarcia (przed kolejką) | 1X2, O/U 2,5, AH | nie |
+| Kursy przed zamknięciem (piątek / wtorek) | 1X2, O/U 2,5, AH | nie |
 | Kursy zamknięcia | 1X2, O/U 2,5, AH | tylko 1X2 |
 | Pinnacle | do ok. połowy 2025/26 | do ok. 1/3 2025/26 |
 | Betfair Exchange | od 2024/25 | od 2024/25 |
@@ -204,7 +204,7 @@ Wnioski:
 |------|--------|----------------------|
 | 0 ✅ | Szkielet: `uv`, `ruff`, `pytest`, CI, konfiguracja | Lint i testy przechodzą lokalnie i w CI |
 | 1 ✅ | Import historii z football-data.co.uk | 5+ sezonów każdej ligi w bazie, raport dostępnych kolumn |
-| 2 | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem |
+| 2 ✅ | Dixon-Coles, rynki z macierzy wyników, backtest single i AKO | Raport: kalibracja, ROI i CLV na kursach zamknięcia z podatkiem (wyniki niżej) |
 | 3 | Bieżące dane: klienci API, aliasy nazw drużyn między źródłami, worker z harmonogramem | Mecze z najbliższych 3 dni z kursami odświeżają się same |
 | 4 | Uruchamianie lokalne: panel i worker jednym poleceniem, autostart workera jako usługa użytkownika systemd, nadrabianie zaległych zadań, backup bazy | Po włączeniu komputera dane same się aktualizują |
 | 5 | Value, kurs minimalny, generator kuponów, rozliczanie | Kupony generują się i rozliczają automatycznie |
@@ -214,13 +214,81 @@ Wnioski:
 **Etap 2 jest punktem decyzyjnym:** jeśli model nie pokazuje przewagi nad
 kursami zamknięcia, wracamy do modelu i danych.
 
-**Worker ruszy przed panelem:** football-data.co.uk daje za darmo tylko
-kursy zamknięcia na część rynków (1X2, O/U 2,5, handicap azjatycki). Kursów
-na pozostałych rynkach i kursów sprzed zamknięcia nie da się później pobrać
-wstecz, więc im wcześniej worker zacznie je zbierać, tym więcej danych do
-oceny modelu. Przy pracy lokalnej kursy zbierają się tylko wtedy, gdy
+**Worker ruszy przed panelem:** football-data.co.uk daje za darmo kursy
+tylko na trzy rynki (1X2, O/U 2,5, handicap azjatycki) i tylko z dwóch
+momentów: przed kolejką (piątek lub wtorek) i na zamknięciu. Kursów na
+pozostałych rynkach ani z innych momentów nie da się później pobrać wstecz,
+więc im wcześniej worker zacznie je zbierać, tym więcej danych do oceny. Przy pracy lokalnej kursy zbierają się tylko wtedy, gdy
 komputer jest włączony. Luki w kursach zamknięcia uzupełni cotygodniowy
 import z football-data.co.uk.
+
+## Wyniki etapu 2
+
+Backtest walk-forward na sezonach 2022/23 – 2026/27 (top 5 lig, 7379
+meczów; Ekstraklasa tylko na kursach zamknięcia). Parametry modelu dobrano
+wcześniej, na sezonach 2020/21 – 2021/22, więc to uczciwy test poza próbą.
+Polecenie: `uv run bukmacherka backtest --from-season 2022`.
+
+### Model statystyczny (Dixon-Coles): brak przewagi
+
+| | Model | Rynek przed zamkn. | Rynek na zamkn. |
+|---|---|---|---|
+| Log loss 1X2 (mniej = lepiej) | 0,988 | 0,968 | 0,966 |
+| Log loss O/U 2,5 | 0,676 | 0,669 | 0,666 |
+
+- Model jest wyraźnie gorszy od kursów. W mieszance model + rynek
+  optymalna waga modelu wychodzi ujemna: tam, gdzie model nie zgadza się
+  z rynkiem, częściej rację ma rynek.
+- „Okazje” modelu są gorsze od zakładów losowych: CLV −8%, ROI singli po
+  podatku −27% (wszystkie zakłady bez selekcji: −17%).
+- Wniosek: sam model z goli nie nadaje się do szukania value. Zostaje jako
+  zapas dla meczów bez kursów ostrego rynku.
+
+### Wycena z kursów ostrego rynku: działa, ale okazji jest mało
+
+Macierz wyników dopasowana do kursów Pinnacle/Betfair (1X2 + O/U) wycenia
+inne rynki zgodnie z rynkiem: handicap azjatycki różni się od kursów
+Pinnacle średnio o 0,7%, choć macierz nie widziała tych kursów.
+
+Gra u bet365 po kursach z piątku/wtorku, gdy kurs jest wyższy od
+sprawiedliwego z Pinnacle/Betfair:
+
+| | Zakłady (4+ sezony, 5 lig) | CLV (bez podatku) |
+|---|---|---|
+| Zdarzenia z przewagą ≥ 2% | 533 (ok. 3 tygodniowo) | +2,3% |
+| Single z EV po podatku ≥ 5% | 12 | — |
+| AKO 3 z takich zdarzeń | 31 | +14,8% (po podatku ok. +1%) |
+| AKO 4 | 30 | +15,9% (po podatku ok. +2%) |
+
+- Dodatnie CLV potwierdza, że to prawdziwe pomyłki bukmachera, a nie szum.
+- Po podatku 12% single praktycznie nie istnieją, a AKO wychodzą w okolicy
+  zera na plus przy ogromnej zmienności (kilka kuponów na sezon, średni kurs
+  kuponu od 14 przy AKO 3 do 91 przy AKO 5). Faktyczne ROI w backteście to
+  szum: za mało kuponów.
+- Wynik dotyczy bet365. Superbet i STS mogą być miększe albo twardsze; tego
+  nie sprawdzimy bez ich kursów. Promocje „bez podatku” zmieniają rachunek
+  radykalnie (przewaga 2% przestaje być zjadana przez 12%).
+
+### Poprawki po niezależnym przeglądzie
+
+Przegląd (4 recenzentów + weryfikacja) potwierdził poprawność wiarygodności
+i gradientu modelu, rozliczania wszystkich 274 rynków i mapowania kolumn
+z football-data.co.uk. Poprawione zostały: AKO łączące kursy z różnych dni,
+CLV kuponu (iloczyn, nie średnia), CLV przy przesuniętej linii handicapu,
+wyrównanie treningu z dniem zebrania kursów, prior beniaminków liczony tylko
+z wcześniejszych sezonów, usuwanie marży metodą potęgową zamiast
+proporcjonalnej (proporcjonalna zawyżała szanse outsiderów), osobna kara dla
+kierunku „liczba goli” (model był zbyt pewny na O/U), Ekstraklasa w tabeli
+trafności, etykiety handicapu europejskiego. Podatek od wygranych powyżej
+2280 zł wejdzie w etapie 5, razem ze stawkami.
+
+### Decyzja po etapie 2 (do ustalenia)
+
+Rekomendacja: oprzeć wycenę na kursach ostrego rynku zamiast na modelu.
+Aplikacja pobiera kursy Pinnacle/Betfair (The Odds API, region EU), wylicza
+kursy sprawiedliwe i kursy minimalne na wszystkich rynkach, a użytkownik
+porównuje je z ofertą Superbetu i STS. Generator składa AKO z wpisanych
+zdarzeń z przewagą. Model Dixona-Colesa zostaje tylko jako zapas.
 
 ## Na później: serwer
 

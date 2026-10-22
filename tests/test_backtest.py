@@ -8,6 +8,8 @@ import pytest
 from bukmacherka.backtest import simulate, walk_forward
 from bukmacherka.backtest.data import OddsSet
 from bukmacherka.model.dixon_coles import score_matrix
+from bukmacherka.model.market_implied import implied_matrix
+from bukmacherka.model.markets import Selection, price
 from bukmacherka.value.ev import devig
 
 
@@ -35,12 +37,28 @@ def make_matches(start: dt.date, days: int, league: str = "E0") -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_walk_forward_uses_only_matches_before_the_week(monkeypatch):
+@pytest.mark.parametrize(
+    ("day", "batch"),
+    [
+        (dt.date(2025, 9, 12), dt.date(2025, 9, 12)),  # piątek
+        (dt.date(2025, 9, 13), dt.date(2025, 9, 12)),  # sobota
+        (dt.date(2025, 9, 14), dt.date(2025, 9, 12)),  # niedziela
+        (dt.date(2025, 9, 15), dt.date(2025, 9, 12)),  # poniedziałek: kolejka weekendowa
+        (dt.date(2025, 9, 16), dt.date(2025, 9, 16)),  # wtorek
+        (dt.date(2025, 9, 17), dt.date(2025, 9, 16)),  # środa
+        (dt.date(2025, 9, 18), dt.date(2025, 9, 16)),  # czwartek
+    ],
+)
+def test_odds_batch(day, batch):
+    assert walk_forward.odds_batch(day) == batch
+
+
+def test_walk_forward_uses_only_matches_before_the_odds_were_collected(monkeypatch):
     matches = make_matches(dt.date(2019, 8, 1), 600)
     calls = []
     real_fit = walk_forward.dixon_coles.fit
 
-    def recording_fit(home, away, hg, ag, weights, **kwargs):
+    def recording_fit(home, away, hg, ag, weights=None, **kwargs):
         calls.append(len(home))
         return real_fit(home, away, hg, ag, weights, **kwargs)
 
@@ -58,8 +76,8 @@ def test_walk_forward_uses_only_matches_before_the_week(monkeypatch):
     predictions = walk_forward.walk_forward(matches, eval_from)
 
     assert calls
-    assert all(last < week for week, last in seen_weeks.items())
-    assert all(week.weekday() == 0 for week in seen_weeks)
+    assert all(last < batch for batch, last in seen_weeks.items())
+    assert all(batch.weekday() in (1, 4) for batch in seen_weeks)
     predicted = matches[matches.id.isin(predictions)]
     assert predicted.date.min() >= eval_from
     assert len(predicted) == len(matches[matches.date >= eval_from])
@@ -76,6 +94,14 @@ def test_promoted_teams():
     )
 
     assert walk_forward.promoted_teams(matches) == {("E0", "2021/2022"): {"C"}}
+
+
+def test_promoted_prior_uses_only_earlier_seasons():
+    history = {"2020/2021": [(-0.3, 0.2), (-0.1, 0.1)], "2021/2022": [(-0.5, 0.5)]}
+
+    assert walk_forward.promoted_prior(history, "2020/2021") == (0.0, 0.0)
+    assert walk_forward.promoted_prior(history, "2021/2022") == pytest.approx((-0.2, 0.15))
+    assert walk_forward.promoted_prior(history, "2022/2023") == pytest.approx((-0.3, 0.8 / 3))
 
 
 @pytest.fixture
@@ -111,6 +137,7 @@ def test_candidates(one_match):
     by_selection = cands.set_index(["market", "selection"])
 
     home = by_selection.loc[("1x2", "home")]
+    assert home.batch == dt.date(2025, 9, 12)  # sobota: kursy z piątku
     assert home.factor == pytest.approx(2.0)
     assert by_selection.loc[("1x2", "draw")].factor == 0
     p_home = devig([1.9, 3.6, 4.4])[0]
@@ -120,8 +147,20 @@ def test_candidates(one_match):
     # Wygrana 2:1 przy handicapie -0,75: połowa stawki wygrywa, połowa wraca.
     ah_home = by_selection.loc[("ah", "home")]
     assert ah_home.factor == pytest.approx(0.5 * 2.1 + 0.5)
-    # Linia zamknięcia jest inna niż linia gry, więc CLV nie jest liczone.
-    assert math.isnan(ah_home.clv)
+    # Linia zamknięcia (-0,5) jest inna niż linia gry (-0,75), więc CLV liczymy
+    # z macierzy dopasowanej do kursów zamknięcia 1X2.
+    closing_matrix, _ = implied_matrix(devig([1.9, 3.6, 4.4]))
+    expected = price(closing_matrix, Selection("ah", "home", -0.75)).expected_return(2.1) - 1
+    assert ah_home.clv == pytest.approx(expected)
+
+
+def test_no_candidates_does_not_crash(one_match):
+    matches, predictions, odds = one_match
+    cands = simulate.candidates(matches, predictions, odds, "market_max", closing=False)
+
+    assert cands.empty
+    assert simulate.single_bets(cands, 0.12, 0.05).empty
+    assert simulate.accumulators(cands, 2, 0.12, 0.05, 0.05).empty
 
 
 def test_single_bets_apply_tax(one_match):
@@ -137,11 +176,11 @@ def test_accumulators():
     cands = pd.DataFrame(
         {
             "match_id": [1, 1, 2, 3, 4, 5],
-            "week": [dt.date(2025, 9, 8)] * 6,
+            "batch": [dt.date(2025, 9, 12)] * 6,
             "edge": [0.20, 0.10, 0.15, 0.12, 0.08, 0.01],
             "odds": [2.0, 3.0, 2.5, 1.8, 2.2, 1.5],
             "factor": [2.0, 0.0, 2.5, 0.0, 2.2, 1.5],
-            "clv": [0.01] * 6,
+            "clv": [0.01, 0.01, 0.02, math.nan, 0.03, 0.0],
         }
     )
 
@@ -153,9 +192,29 @@ def test_accumulators():
     assert coupons.odds.tolist() == pytest.approx([5.0, 3.96])
     assert coupons.ev.tolist() == pytest.approx([0.88 * 1.20 * 1.15 - 1, 0.88 * 1.12 * 1.08 - 1])
     assert coupons.profit.tolist() == pytest.approx([0.88 * 5.0 - 1, -1.0])
+    # CLV kuponu narasta z każdym zdarzeniem; brak CLV zdarzenia = brak CLV kuponu.
+    assert coupons.clv.iloc[0] == pytest.approx(1.01 * 1.02 - 1)
+    assert math.isnan(coupons.clv.iloc[1])
 
     strict = simulate.accumulators(cands, size=2, tax=0.12, min_edge=0.05, min_ev=0.2)
     assert strict.match_ids.tolist() == ["1,2"]
+
+
+def test_accumulators_do_not_mix_odds_batches():
+    cands = pd.DataFrame(
+        {
+            "match_id": [1, 2, 3, 4],
+            "batch": [dt.date(2025, 9, 12), dt.date(2025, 9, 16)] * 2,
+            "edge": [0.2, 0.2, 0.1, 0.1],
+            "odds": [2.0] * 4,
+            "factor": [2.0] * 4,
+            "clv": [0.0] * 4,
+        }
+    )
+
+    coupons = simulate.accumulators(cands, size=2, tax=0.12, min_edge=0.05, min_ev=0.0)
+
+    assert sorted(coupons.match_ids) == ["1,3", "2,4"]
 
 
 def test_model_accuracy(one_match):
@@ -167,4 +226,14 @@ def test_model_accuracy(one_match):
     assert row.market == "1x2"
     assert row.model == pytest.approx(-math.log(home_win))
     assert row.closing == pytest.approx(-math.log(devig([1.9, 3.6, 4.4])[0]))
-    assert row.opening == pytest.approx(-math.log(devig([1.95, 3.5, 4.1])[0]))
+    assert row.pre_closing == pytest.approx(-math.log(devig([1.95, 3.5, 4.1])[0]))
+
+
+def test_model_accuracy_without_pre_closing_odds(one_match):
+    matches, predictions, odds = one_match
+    del odds[(1, "market_avg", "1x2", False)]
+
+    row = simulate.model_accuracy(matches, predictions, odds).iloc[0]
+
+    assert math.isnan(row.pre_closing)
+    assert row.closing == pytest.approx(-math.log(devig([1.9, 3.6, 4.4])[0]))

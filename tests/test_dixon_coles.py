@@ -90,3 +90,47 @@ def test_team_without_matches_gets_prior():
 def test_fit_requires_positive_regularisation():
     with pytest.raises(ValueError):
         dc.fit(["A"], ["B"], [1], [0], reg=0)
+
+
+def test_gradient_matches_finite_differences_also_where_tau_is_not_positive():
+    from scipy.optimize import approx_fprime
+
+    rng = np.random.default_rng(1)
+    n = 4
+    hi = rng.integers(0, n, 40)
+    ai = (hi + rng.integers(1, n, 40)) % n
+    x = rng.integers(0, 3, 40).astype(float)
+    y = rng.integers(0, 3, 40).astype(float)
+    x[:5], y[:5] = 0, 0
+    w = rng.uniform(0.3, 1, 40)
+    masks = ((x == 0) & (y == 0), (x == 0) & (y == 1), (x == 1) & (y == 0), (x == 1) & (y == 1))
+    prior = np.zeros(n)
+    args = (hi, ai, x, y, w, n, prior, prior, 3.0, 7.0, masks)
+    for rho in (-0.25, 0.0, 0.1, 0.29):
+        # Duże oczekiwane gole sprawiają, że przy dodatnim ρ τ(0:0) spada poniżej zera.
+        theta = np.concatenate([[1.0, 0.3, rho], rng.normal(0, 0.3, 2 * n)])
+        numeric = approx_fprime(theta, lambda t: dc._objective(t, *args)[0], 1e-7)
+        analytic = dc._objective(theta, *args)[1]
+        np.testing.assert_allclose(analytic, numeric, rtol=1e-4, atol=1e-3)
+
+
+def test_separate_penalty_for_goal_volume():
+    rng = np.random.default_rng(3)
+    home, away, hg, ag = [], [], [], []
+    for _ in range(30):
+        for h, a in (("A", "B"), ("B", "A"), ("A", "C"), ("C", "A"), ("B", "C"), ("C", "B")):
+            home.append(h)
+            away.append(a)
+            # A gra mecze z dużą liczbą goli po obu stronach.
+            boost = 1.0 if "A" in (h, a) else 0.0
+            hg.append(rng.poisson(1.3 + boost))
+            ag.append(rng.poisson(1.0 + boost))
+
+    loose = dc.fit(home, away, hg, ag, reg=1.0, reg_total=1.0)
+    strict = dc.fit(home, away, hg, ag, reg=1.0, reg_total=1e6)
+
+    a_loose = loose.params()["A"]
+    a_strict = strict.params()["A"]
+    assert a_loose[0] + a_loose[1] > 0.3
+    # Przy ogromnej karze na kierunek liczby goli suma atak + obrona znika.
+    assert a_strict[0] + a_strict[1] == pytest.approx(0, abs=1e-3)

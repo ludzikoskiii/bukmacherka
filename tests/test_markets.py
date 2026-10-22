@@ -106,6 +106,10 @@ def test_totals_sides_are_mirrored(matrix, line):
 def test_label_shows_line_from_the_bettors_side():
     assert Selection("ah", "home", -0.75).label() == "home -0.75"
     assert Selection("ah", "away", -0.75).label() == "away +0.75"
+    assert Selection("ah", "away", 0.0).label() == "away 0"
+    assert Selection("eh", "away", -1.0).label() == "away +1"
+    assert Selection("eh", "home", -1.0).label() == "home -1"
+    assert Selection("eh", "draw", -1.0).label() == "draw (home -1)"
     assert Selection("ou", "over", 2.5).label() == "over +2.5"
     assert Selection("1x2", "draw").label() == "draw"
 

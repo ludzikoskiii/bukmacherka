@@ -48,3 +48,15 @@ def test_devig():
     assert ev.devig([2.0, 2.0]) == pytest.approx([0.5, 0.5])
     assert ev.devig([1.9, 1.9]) == pytest.approx([0.5, 0.5])
     assert sum(ev.devig([2.1, 3.4, 3.6])) == pytest.approx(1)
+    # Kursy z sumą odwrotności poniżej 1 (np. maksimum rynku) też działają.
+    assert sum(ev.devig([2.2, 3.7, 3.9])) == pytest.approx(1)
+
+
+def test_devig_takes_more_margin_from_longshots():
+    odds = [1.30, 5.50, 11.0]
+    power = ev.devig(odds)
+    proportional = ev.devig_proportional(odds)
+
+    assert power[0] > proportional[0]
+    assert power[2] < proportional[2]
+    assert sum(proportional) == pytest.approx(1)

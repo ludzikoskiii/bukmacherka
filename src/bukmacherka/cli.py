@@ -36,13 +36,22 @@ def main(argv: list[str] | None = None) -> None:
         help="kursy, po których stawiamy zakłady",
     )
     backtest.add_argument(
-        "--closing", action="store_true", help="graj po kursach zamknięcia zamiast otwarcia"
+        "--closing",
+        action="store_true",
+        help="graj po kursach zamknięcia zamiast kursów przed zamknięciem",
+    )
+    backtest.add_argument(
+        "--fair",
+        default="model",
+        choices=["model", "market"],
+        help="skąd brać prawdopodobieństwa: model statystyczny albo kursy Pinnacle/Betfair",
     )
     backtest.add_argument("--tax", type=float, help="podatek od stawki (domyślnie z ustawień)")
     backtest.add_argument("--min-ev", type=float, help="minimalne EV singla i kuponu po podatku")
     backtest.add_argument("--min-edge", type=float, help="minimalna przewaga zdarzenia w AKO")
     backtest.add_argument("--xi", type=float, default=dixon_coles.DEFAULT_XI)
     backtest.add_argument("--reg", type=float, default=dixon_coles.DEFAULT_REG)
+    backtest.add_argument("--reg-total", type=float, default=dixon_coles.DEFAULT_REG_TOTAL)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -69,11 +78,13 @@ def main(argv: list[str] | None = None) -> None:
             from_season=args.from_season or settings.first_season + 1,
             bookmaker=args.bookmaker,
             closing=args.closing,
+            fair=args.fair,
             tax=settings.tax_rate if args.tax is None else args.tax,
             min_ev=settings.min_ev if args.min_ev is None else args.min_ev,
             min_edge=settings.min_leg_edge if args.min_edge is None else args.min_edge,
             xi=args.xi,
             reg=args.reg,
+            reg_total=args.reg_total,
         )
         result = run_backtest(session_factory, config)
         save(result, settings.data_dir / "backtest")

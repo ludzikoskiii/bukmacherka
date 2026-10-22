@@ -25,6 +25,18 @@ uv run bukmacherka import-history   # pobierz historię do data/bukmacherka.db
 uv run bukmacherka report           # pokaż, co jest w bazie
 ```
 
+## Backtest
+
+```bash
+uv run bukmacherka backtest --from-season 2022                 # model statystyczny
+uv run bukmacherka backtest --from-season 2022 --fair market   # wycena z kursów Pinnacle/Betfair
+uv run bukmacherka backtest --leagues POL --closing --bookmaker market_avg
+```
+
+Opcje: `--bookmaker` (bet365, market_avg, market_max, ...), `--closing`,
+`--min-ev`, `--min-edge`, `--tax`. Raport trafia na ekran, a szczegóły
+zakładów do `data/backtest/`.
+
 Pobrane pliki CSV trafiają do `data/raw/`. Zakończone sezony pobierają się
 tylko raz, a bieżący przy każdym uruchomieniu. Opcje: `--leagues E0 POL`,
 `--first-season 2021`, `--refresh`.

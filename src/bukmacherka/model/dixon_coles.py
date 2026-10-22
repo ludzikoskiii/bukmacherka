@@ -23,9 +23,19 @@ from scipy.stats import poisson
 # Waga meczu sprzed `t` dni to exp(-XI * t). 0,0019 daje połowiczny spadek
 # wagi po ok. roku.
 DEFAULT_XI = 0.0019
-DEFAULT_REG = 2.0
-DEFAULT_MAX_GOALS = 10
+# Kara L2 osobno dla dwóch kierunków parametrów drużyny: siły (atak - obrona,
+# decyduje o 1X2) i liczby goli (atak + obrona, decyduje o Over/Under).
+# Wartości dobrane walk-forward na sezonach 2020/21 - 2021/22, przed
+# okresem oceny backtestu (patrz docs/PLAN.md).
+DEFAULT_REG = 10.0
+DEFAULT_REG_TOTAL = 60.0
+# Przy 15 golach na drużynę ucięta część rozkładu jest pomijalna nawet dla
+# meczów z oczekiwaną liczbą goli powyżej 5.
+DEFAULT_MAX_GOALS = 15
 RHO_BOUNDS = (-0.3, 0.3)
+# Poniżej tej wartości log(τ) jest przedłużany liniowo, żeby funkcja celu i jej
+# gradient były spójne także dla parametrów, przy których τ <= 0.
+TAU_FLOOR = 1e-3
 
 
 @dataclass(frozen=True)
@@ -90,6 +100,7 @@ def fit(
     extra_teams: Iterable[str] = (),
     priors: Mapping[str, tuple[float, float]] | None = None,
     reg: float = DEFAULT_REG,
+    reg_total: float | None = None,
     init: DixonColes | None = None,
 ) -> DixonColes:
     """Dopasowuje model metodą największej wiarygodności z karą L2.
@@ -98,9 +109,12 @@ def fit(
     pierwszą kolejką), dla których model przyjmie wartości a priori.
     `priors` podaje dla wybranych drużyn (atak, obrona), w stronę których
     ściągane są parametry. `init` przyspiesza dopasowanie, startując
-    z parametrów poprzedniego modelu.
+    z parametrów poprzedniego modelu. `reg` to kara w kierunku siły drużyny
+    (atak - obrona), a `reg_total` w kierunku liczby goli w jej meczach
+    (atak + obrona); domyślnie obie są równe.
     """
-    if reg <= 0:
+    reg_total = reg if reg_total is None else reg_total
+    if reg <= 0 or reg_total <= 0:
         raise ValueError("Kara L2 musi być dodatnia, bo zapewnia identyfikowalność modelu")
     teams = tuple(sorted(set(home) | set(away) | set(extra_teams)))
     index = {team: i for i, team in enumerate(teams)}
@@ -129,7 +143,7 @@ def fit(
     result = minimize(
         _objective,
         theta0,
-        args=(hi, ai, x, y, w, n, prior_att, prior_def, reg, masks),
+        args=(hi, ai, x, y, w, n, prior_att, prior_def, reg, reg_total, masks),
         jac=True,
         method="L-BFGS-B",
         bounds=[(None, None), (None, None), RHO_BOUNDS] + [(None, None)] * (2 * n),
@@ -145,8 +159,19 @@ def fit(
     )
 
 
-def _objective(theta, hi, ai, x, y, w, n, prior_att, prior_def, reg, masks):
-    """Ujemna ważona log-wiarygodność z karą L2 oraz jej gradient."""
+def _log_tau(tau: np.ndarray) -> np.ndarray:
+    """log(τ), dla τ < TAU_FLOOR przedłużony liniowo (ciągły razem z pochodną)."""
+    safe = np.maximum(tau, TAU_FLOOR)
+    return np.where(tau >= TAU_FLOOR, np.log(safe), np.log(TAU_FLOOR) + tau / TAU_FLOOR - 1)
+
+
+def _objective(theta, hi, ai, x, y, w, n, prior_att, prior_def, reg, reg_total, masks):
+    """Ujemna ważona log-wiarygodność z karą L2 oraz jej gradient.
+
+    Kara to `reg / 2 * sum(s^2) + reg_total / 2 * sum(t^2)`, gdzie
+    `s = (d_att - d_def) / sqrt(2)` i `t = (d_att + d_def) / sqrt(2)`, a d_* to
+    odchylenia od wartości a priori. Przy `reg == reg_total` to zwykła kara L2.
+    """
     intercept, home_adv, rho = theta[0], theta[1], theta[2]
     att = theta[3 : 3 + n]
     dfc = theta[3 + n :]
@@ -163,38 +188,50 @@ def _objective(theta, hi, ai, x, y, w, n, prior_att, prior_def, reg, masks):
     grad_rho = np.zeros_like(x)
     tau = np.ones_like(x)
 
+    # Pochodne log(τ) liczymy jako dτ / max(τ, TAU_FLOOR), co odpowiada
+    # liniowemu przedłużeniu log(τ) poniżej TAU_FLOOR (patrz _log_tau).
     m00, m01, m10, m11 = masks
     t = 1 - lam[m00] * mu[m00] * rho
     tau[m00] = t
-    grad_a[m00] -= lam[m00] * mu[m00] * rho / t
-    grad_b[m00] -= lam[m00] * mu[m00] * rho / t
-    grad_rho[m00] = -lam[m00] * mu[m00] / t
+    d = np.maximum(t, TAU_FLOOR)
+    grad_a[m00] -= lam[m00] * mu[m00] * rho / d
+    grad_b[m00] -= lam[m00] * mu[m00] * rho / d
+    grad_rho[m00] = -lam[m00] * mu[m00] / d
 
     t = 1 + lam[m01] * rho
     tau[m01] = t
-    grad_a[m01] += lam[m01] * rho / t
-    grad_rho[m01] = lam[m01] / t
+    d = np.maximum(t, TAU_FLOOR)
+    grad_a[m01] += lam[m01] * rho / d
+    grad_rho[m01] = lam[m01] / d
 
     t = 1 + mu[m10] * rho
     tau[m10] = t
-    grad_b[m10] += mu[m10] * rho / t
-    grad_rho[m10] = mu[m10] / t
+    d = np.maximum(t, TAU_FLOOR)
+    grad_b[m10] += mu[m10] * rho / d
+    grad_rho[m10] = mu[m10] / d
 
     tau[m11] = 1 - rho
-    grad_rho[m11] = -1 / (1 - rho)
+    grad_rho[m11] = -1 / max(1 - rho, TAU_FLOOR)
 
-    ll += np.log(np.maximum(tau, 1e-12))
+    ll += _log_tau(tau)
 
     wa = w * grad_a
     wb = w * grad_b
     d_att = att - prior_att
     d_def = dfc - prior_def
 
-    value = -np.dot(w, ll) + 0.5 * reg * (d_att @ d_att + d_def @ d_def)
+    strength = d_att - d_def
+    total = d_att + d_def
+    penalty = 0.25 * (reg * strength @ strength + reg_total * total @ total)
+    value = -np.dot(w, ll) + penalty
     grad = np.empty_like(theta)
     grad[0] = -(wa.sum() + wb.sum())
     grad[1] = -wa.sum()
     grad[2] = -np.dot(w, grad_rho)
-    grad[3 : 3 + n] = -(np.bincount(hi, wa, n) + np.bincount(ai, wb, n)) + reg * d_att
-    grad[3 + n :] = -(np.bincount(ai, wa, n) + np.bincount(hi, wb, n)) + reg * d_def
+    grad[3 : 3 + n] = -(np.bincount(hi, wa, n) + np.bincount(ai, wb, n)) + 0.5 * (
+        reg * strength + reg_total * total
+    )
+    grad[3 + n :] = -(np.bincount(ai, wa, n) + np.bincount(hi, wb, n)) + 0.5 * (
+        reg_total * total - reg * strength
+    )
     return value, grad

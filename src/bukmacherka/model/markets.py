@@ -23,11 +23,22 @@ class Selection:
     line: float | None = None
 
     def label(self) -> str:
-        """Opis zakładu z linią widzianą od strony typowanej drużyny."""
+        """Opis zakładu z linią widzianą od strony typowanej drużyny.
+
+        W handicapach linia jest zapisana jako handicap gospodarza, więc dla
+        gościa odwracamy znak. Remis w handicapie europejskim opisujemy
+        handicapem gospodarza, bo nie ma „swojej” strony.
+        """
         if self.line is None:
             return self.selection
-        line = -self.line if self.market == "ah" and self.selection == "away" else self.line
-        return f"{self.selection} {line:+g}"
+        if self.market == "eh" and self.selection == "draw":
+            return f"draw (home {_signed(self.line)})"
+        handicap = self.market in ("ah", "eh") and self.selection == "away"
+        return f"{self.selection} {_signed(-self.line if handicap else self.line)}"
+
+
+def _signed(line: float) -> str:
+    return "0" if line == 0 else f"{line:+g}"
 
 
 @dataclass(frozen=True)
